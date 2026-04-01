@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Auto Smart Follow Cam (Flask)</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+      body {
+        font-family: sans-serif;
+        text-align: center;
+        background-color: #222;
+        color: white;
+        margin-top: 20px;
+      }
+      video {
+        display: none;
+      }
+      #outputImage {
+        width: 100%;
+        max-width: 800px;
+        border: 3px solid #444;
+        border-radius: 10px;
+      }
+      .controls {
+        margin-top: 15px;
+      }
+      button {
+        padding: 10px 20px;
+        font-size: 16px;
+        margin: 0 10px;
+        cursor: pointer;
+        border: none;
+        border-radius: 5px;
+        background-color: #007bff;
+        color: white;
+      }
+      button:hover {
+        background-color: #0056b3;
+      }
+      #status {
+        color: #ffeb3b;
+        margin-bottom: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🤖 Smart Follow Cam (Flask)</h1>
+    <div id="status">🔴 서버 연결 대기중...</div>
+
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas" style="display: none"></canvas>
+
+    <img id="outputImage" alt="AI Processed Stream" />
+
+    <div class="controls">
+      <button onclick="changeZoom(0.2)">🔍 줌 인 (+)</button>
+      <span id="zoomLevelText" style="font-size: 20px; margin: 0 15px"
+        >D-ZOOM: 1.0X</span
+      >
+      <button onclick="changeZoom(-0.2)">🔎 줌 아웃 (-)</button>
+    </div>
+
+    <script>
+      const video = document.getElementById("video");
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+      const outputImage = document.getElementById("outputImage");
+      const statusText = document.getElementById("status");
+      const zoomLevelText = document.getElementById("zoomLevelText");
+
+      let zoomLevel = 1.0;
+
+      // 💡 Flask 서버 주소 (배포 시 이 주소를 바꿔야 합니다)
+      const SERVER_URL = "http://localhost:5000";
+      const socket = io(SERVER_URL);
+
+      window.changeZoom = function (amount) {
+        zoomLevel += amount;
+        if (zoomLevel < 1.0) zoomLevel = 1.0;
+        if (zoomLevel > 5.0) zoomLevel = 5.0;
+        zoomLevelText.innerText = `D-ZOOM: ${zoomLevel.toFixed(1)}X`;
+      };
+
+      window.addEventListener("keydown", (e) => {
+        if (e.key === "+" || e.key === "=") changeZoom(0.2);
+        if (e.key === "-" || e.key === "_") changeZoom(-0.2);
+      });
+
+      navigator.mediaDevices
+        .getUserMedia({ video: { width: 640, height: 480 } })
+        .then((stream) => {
+          video.srcObject = stream;
+          video.play();
+          requestAnimationFrame(sendFrames);
+        })
+        .catch((err) => alert("웹캠을 켤 수 없습니다: " + err));
+
+      // Socket.IO 이벤트 리스너
+      socket.on("connect", () => {
+        statusText.innerHTML = "🟢 서버 연결 성공! AI 스트리밍 중...";
+      });
+
+      socket.on("disconnect", () => {
+        statusText.innerHTML = "🔴 서버와 연결이 끊겼습니다.";
+      });
+
+      // 파이썬에서 처리된 이미지를 받았을 때 화면에 그리기
+      socket.on("processed_frame", (data) => {
+        outputImage.src = data;
+      });
+
+      function sendFrames() {
+        if (socket.connected && video.readyState === video.HAVE_ENOUGH_DATA) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+          const imageData = canvas.toDataURL("image/jpeg", 0.6); // 화질 60%로 압축 (속도 향상)
+
+          // Flask 백엔드로 'image_frame' 이벤트 전송
+          socket.emit("image_frame", {
+            image: imageData,
+            zoom: zoomLevel,
+          });
+        }
+        // 약 30FPS로 전송하도록 약간의 딜레이 부여 (과부하 방지)
+        setTimeout(() => requestAnimationFrame(sendFrames), 33);
+      }
+    </script>
+  </body>
+</html>
